@@ -24,7 +24,8 @@ class NESProc:
          '\xAD': (self.do_lda, 3), '\x10': (self.do_bpl, 2), \
          '\x8D': (self.do_sta, 3), '\x29': (self.do_and, 2), \
          '\xF0': (self.do_beq, 2), '\x1D': (self.do_ora, 3), \
-         '\xD8': (self.do_cld, 1)}
+         '\xD8': (self.do_cld, 1), '\x85': (self.do_sta, 2), \
+         '\x60': (self.do_rts, 1), '\xC6': (self.do_dec, 2)}
       self.interfaces = {0x2002: "PPU Status Reg", 0x4016: "Joystick 1"}
       self.A = 0
       self.X = 0
@@ -35,42 +36,31 @@ class NESProc:
       self.nes_file = nes_file
       self.memory = bytearray(0x10000)
       self.write_memory(0x8000, self.nes_file.prgs[0]) #TODO: make better
-      
-   def do_load(self, val):
-      if val < 0:
-         self.P['N'] = 1
-      else:
-         self.P['N'] = 0
-         
-      if val == 0:
-         self.P['Z'] = 1
-      else:
-         self.P['Z'] = 0
          
    def do_ldx(self, data):
       addr = ord(data[1])
-      self.do_load(addr) 
       print "LDX $%02x" % addr
       self.X = addr
+      self.set_flags(self.X)
    
    def do_ldy(self, data):
       addr = ord(data[1])
-      self.do_load(addr)
       print "LDY $%02x" % addr
       self.Y = addr
+      self.set_flags(self.Y)
       
    def do_lda(self, data):
       if data[0] == '\xA9':
          val = ord(data[1])
          print "LDA $%02x" % val
-         self.do_load(val)
          self.A = val
+         self.set_flags(self.A)
       elif data[0] == '\xAD':
          addr = struct.unpack('H', data[1:3])[0]
          val = self.read_memory(addr, 1)[0]
          print "LDA [$%04x] => $%02x" % (addr, val)
-         self.do_load(val)
          self.A = val
+         self.set_flags(self.A)
       
    def do_sty(self, data):
       addr = ord(data[1])
@@ -87,6 +77,10 @@ class NESProc:
          addr = struct.unpack('H', data[1:3])[0]
          print "STA $%04x" % addr
          self.write_memory(addr, chr(self.A))
+      elif data[0] == '\x85':
+         addr = ord(data[1])
+         print "STA $%02x" % addr
+         self.write_memory(addr, chr(self.A))
       
    def do_jmp(self, data):
       loc = struct.unpack('H', data[1:3])[0]
@@ -97,15 +91,18 @@ class NESProc:
       print "DEY"
       if self.Y == 0:
          self.Y = 0xFF
-         self.P['N'] = 1
       else:
          self.Y -= 1
+      self.set_flags(self.Y)
+      
+   def calc_rel_jmp(self, data):
+      return self.PC + struct.unpack('b',data[1])[0] + self.INST_SET[data[0]][1]
          
    def do_bne(self, data):
-      addr = ord(data[1])
-      print "BNE $%04x + $%02x => $%04x" % (self.PC, addr, self.PC+addr)
+      offset = self.calc_rel_jmp(data)
+      print "BNE $%04x + $%02x => $%04x" % (self.PC, struct.unpack('b',data[1])[0], offset)
       if self.P['Z'] == 0:
-         return addr + self.PC
+         return offset
          
    def do_cpy(self, data):
       addr = ord(data[1])
@@ -132,29 +129,22 @@ class NESProc:
       self.P['I'] = 1
       
    def do_bpl(self, data):
-      addr = self.PC + ord(data[1])
-      print "BPL $%04x" % addr
+      offset = self.calc_rel_jmp(data)
+      print "BPL $%04x + $%02x => $%04x" % (self.PC, struct.unpack('b',data[1])[0], offset)
       if self.P['N'] == 0:
-         return addr 
+         return offset 
    
    def do_and(self, data): 
       addr = ord(data[1])
       print "AND $%02x" % addr
       self.A &= addr
-      if self.A == 0:
-         self.P['Z'] = 1
-      else:
-         self.P['Z'] = 0
-      if self.A > 0x7F:
-         self.P['N'] = 1
-      else:
-         self.P['N'] = 0
+      self.set_flags(self.A)
    
    def do_beq(self, data):
-      addr = ord(data[1])
-      print "BEQ $%04x + $%02x => $%04x" % (self.PC, addr, (addr + self.PC))
+      offset = self.calc_rel_jmp(data)
+      print "BEQ $%04x + $%02x => $%04x" % (self.PC, struct.unpack('b',data[1])[0], offset)
       if self.P['Z'] == 1:
-         return addr + self.PC
+         return offset
    
    def do_ora(self, data):
       if data[0] == '\x1d':
@@ -162,18 +152,37 @@ class NESProc:
          val = self.read_memory(addr, 1)[0]
          print "ORA $%02x, X" % val
          self.A = self.X | val
-         if self.A == 0:
-            self.P['Z'] = 1
-         else:
-            self.P['Z'] = 0
-         if self.A > 0x7F:
-            self.P['N'] = 1
-         else:
-            self.P['N'] = 0
+         self.set_flags(self.A)
             
    def do_cld(self, data):
       print "CLD"
       self.P['D'] = 0
+      
+   def do_rts(self, data):
+      print "RTS [FINISH ME!]" #TODO Finish
+      
+   def set_flags(self, val):
+      if val == 0:
+         self.P['Z'] = 1
+      else:
+         self.P['Z'] = 0
+      if val > 0x7F:
+         self.P['N'] = 1
+      else:
+         self.P['N'] = 0
+         
+   def do_dec(self, data):
+      if data[0] == "\xC6":
+         addr = ord(data[1])
+         print "DEC $%02x" % addr
+         temp = self.read_memory(addr, 1)[0]
+         if temp == 0:
+            temp = 0xFF
+         else:
+            temp -= 1
+         self.write_memory(addr, chr(temp))
+         self.set_flags(temp)
+            
    
    def write_memory(self, addr, val):
       try:
@@ -192,7 +201,13 @@ class NESProc:
    
    def parse_instruction(self, data):
       #print "Parsing: %02x" % ord(data[0])
-      new_loc = self.INST_SET[data[:1]][0](data)
+      try:
+         new_loc = self.INST_SET[data[:1]][0](data)
+      except:
+         print "Unknown Opcode"
+         #print "Unknown Opcode - skipping"
+         #new_loc = self.PC + 1
+         
       if new_loc:
          self.PC = new_loc
       else:
