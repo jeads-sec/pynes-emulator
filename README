@@ -1,0 +1,3 @@
+Python NES Emulator
+
+Usage: ./nes_parse.py [rom_file]
