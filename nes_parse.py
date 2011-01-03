@@ -7,6 +7,8 @@ import sys
 #PC reset vector: 0xFFFC
 
 #PPU Status Reg: 0x2002 (see http://web.textfiles.com/games/nestech.txt)
+#Joystick 1: $4016
+#Joystick 2: $4017
 
 def bin(x): 
    return ''.join(x & (1 << i) and '1' or '0' for i in range(7,-1,-1))
@@ -18,8 +20,12 @@ class NESProc:
          '\x4C': (self.do_jmp, 3), '\x84': (self.do_sty, 2), \
          '\xA9': (self.do_lda, 2), '\x91': (self.do_sta, 2), \
          '\x88': (self.do_dey, 1), '\xD0': (self.do_bne, 2), \
-         '\xC0': (self.do_cpy, 2), '\x78': (self.do_sei, 2), \
-         '\xAD': (self.do_lda, 3), '\x10': (self.do_bpl, 2)}
+         '\xC0': (self.do_cpy, 2), '\x78': (self.do_sei, 1), \
+         '\xAD': (self.do_lda, 3), '\x10': (self.do_bpl, 2), \
+         '\x8D': (self.do_sta, 3), '\x29': (self.do_and, 2), \
+         '\xF0': (self.do_beq, 2), '\x1D': (self.do_ora, 3), \
+         '\xD8': (self.do_cld, 1)}
+      self.interfaces = {0x2002: "PPU Status Reg", 0x4016: "Joystick 1"}
       self.A = 0
       self.X = 0
       self.Y = 0
@@ -28,6 +34,7 @@ class NESProc:
       self.P = {'C': 0, 'Z': 0, 'I': 0, 'D': 0, 'B': 0, 'V': 0, 'N': 0}
       self.nes_file = nes_file
       self.memory = bytearray(0x10000)
+      self.write_memory(0x8000, self.nes_file.prgs[0]) #TODO: make better
       
    def do_load(self, val):
       if val < 0:
@@ -55,9 +62,9 @@ class NESProc:
    def do_lda(self, data):
       if data[0] == '\xA9':
          val = ord(data[1])
-         print "LDA $%02x" % addr
+         print "LDA $%02x" % val
          self.do_load(val)
-         self.A = addr
+         self.A = val
       elif data[0] == '\xAD':
          addr = struct.unpack('H', data[1:3])[0]
          val = self.read_memory(addr, 1)[0]
@@ -68,12 +75,18 @@ class NESProc:
    def do_sty(self, data):
       addr = ord(data[1])
       print "STY $%02x" % addr
-      self.memory[addr] = chr(self.Y)
+      self.write_memory(addr, chr(self.Y))
       
    def do_sta(self, data):
-      addr = ord(data[1])
-      print "STA $%02x" % addr
-      self.memory[addr] = chr(self.A)
+      if data[0] == '\x91':
+         #TODO: Don't think this is fully complete
+         addr = ord(data[1])
+         print "STA $%02x" % addr
+         self.write_memory(addr, chr(self.A))
+      elif data[0] == '\x8D':
+         addr = struct.unpack('H', data[1:3])[0]
+         print "STA $%04x" % addr
+         self.write_memory(addr, chr(self.A))
       
    def do_jmp(self, data):
       loc = struct.unpack('H', data[1:3])[0]
@@ -122,10 +135,59 @@ class NESProc:
       addr = self.PC + ord(data[1])
       print "BPL $%04x" % addr
       if self.P['N'] == 0:
-         return addr
-         
-      
+         return addr 
+   
+   def do_and(self, data): 
+      addr = ord(data[1])
+      print "AND $%02x" % addr
+      self.A &= addr
+      if self.A == 0:
+         self.P['Z'] = 1
+      else:
+         self.P['Z'] = 0
+      if self.A > 0x7F:
+         self.P['N'] = 1
+      else:
+         self.P['N'] = 0
+   
+   def do_beq(self, data):
+      addr = ord(data[1])
+      print "BEQ $%04x + $%02x => $%04x" % (self.PC, addr, (addr + self.PC))
+      if self.P['Z'] == 1:
+         return addr + self.PC
+   
+   def do_ora(self, data):
+      if data[0] == '\x1d':
+         addr = struct.unpack('H', data[1:3])[0]
+         val = self.read_memory(addr, 1)[0]
+         print "ORA $%02x, X" % val
+         self.A = self.X | val
+         if self.A == 0:
+            self.P['Z'] = 1
+         else:
+            self.P['Z'] = 0
+         if self.A > 0x7F:
+            self.P['N'] = 1
+         else:
+            self.P['N'] = 0
+            
+   def do_cld(self, data):
+      print "CLD"
+      self.P['D'] = 0
+   
+   def write_memory(self, addr, val):
+      try:
+         print "Writing to %s" % self.interfaces[addr]
+      except:
+         pass
+      for idx,byte in enumerate(val):
+         self.memory[addr+idx] = byte   
+   
    def read_memory(self, addr, length):
+      try:
+         print "Reading from %s" % self.interfaces[addr]
+      except:
+         pass
       return self.memory[addr:addr+length]
    
    def parse_instruction(self, data):
@@ -148,12 +210,14 @@ class NESProc:
       while True:
          offset = self.PC - 0x8000
          
-         for char in self.nes_file.prgs[0][offset:offset+5]:
+         for char in self.nes_file.prgs[0][offset:offset+10]:
             print "%02x " % ord(char),
          print "\n",
          self.print_regs()
          self.parse_instruction(self.nes_file.prgs[0][offset:offset+5])
          print "\n",
+      
+      
       
 class NESFile:
    prgs = []
