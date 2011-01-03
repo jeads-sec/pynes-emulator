@@ -1,3 +1,9 @@
 Python NES Emulator
 
 Usage: ./nes_parse.py [rom_file]
+
+
+TODO:
+    + Implement VBlank interrupt emulation
+        o There are 60 VBlanks per second on NTSC
+    + Probably need to correctly simulate clock cycles of instructions
