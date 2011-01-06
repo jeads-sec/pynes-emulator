@@ -36,8 +36,11 @@ class NESProc:
          '\xF0': (self.do_beq, 2, 2), '\x1D': (self.do_ora, 3, 4), #TODO: conditional cycles\
          '\xD8': (self.do_cld, 1, 2), '\x85': (self.do_sta, 2, 3), \
          '\x60': (self.do_rts, 1, 6), '\xC6': (self.do_dec, 2, 5), \
-         '\x9A': (self.do_txs, 1, 2),}
-      self.interfaces = {0x2002: "PPU Status Reg", 0x2006: "VRAM Address", \
+         '\x9A': (self.do_txs, 1, 2), '\x95': (self.do_sta, 2, 4), \
+         '\x9D': (self.do_sta, 3, 5), '\xE8': (self.do_inx, 1, 2), \
+         '\x20': (self.do_jsr, 3, 6), }
+      self.interfaces = {0x2000: "PPU Control Reg 1", 0x2001: "PPU Control Reg 2", \
+         0x2002: "PPU Status Reg", 0x2006: "VRAM Address", \
          0x2007: "VRAM I/O", 0x4016: "Joystick 1"}
          
       self.cycle_count = 0
@@ -45,7 +48,7 @@ class NESProc:
       self.X = 0
       self.Y = 0
       self.PC = 0x8000
-      self.S = 0
+      self.S = 0xFF
       self.P = {'C': 0, 'Z': 0, 'I': 0, 'D': 0, 'B': 0, 'V': 0, 'N': 0}
       
       self.vblank = False
@@ -81,7 +84,7 @@ class NESProc:
          self.set_flags(self.A)
       elif data[0] == '\xAD':
          addr = struct.unpack('H', data[1:3])[0]
-         val = self.read_memory(addr, 1)[0]
+         val = ord(self.read_memory(addr, 1))
          print "LDA [$%04x] => $%02x" % (addr, val)
          self.A = val
          self.set_flags(self.A)
@@ -104,6 +107,15 @@ class NESProc:
       elif data[0] == '\x85':
          addr = ord(data[1])
          print "STA $%02x" % addr
+         self.write_memory(addr, chr(self.A))
+      elif data[0] == '\x95':
+         addr = ord(data[1]) + self.X
+         print "STA $%02x, X, X = $%02x" % (ord(data[1]), self.X)
+         self.write_memory(addr, chr(self.A))
+      elif data[0] == '\x9D':
+         abs_addr = struct.unpack('H', data[1:3])[0]
+         addr = abs_addr + self.X
+         print "STA $%04x, X, X = $%02x" % (abs_addr, self.X)
          self.write_memory(addr, chr(self.A))
       
    def do_jmp(self, data):
@@ -173,7 +185,7 @@ class NESProc:
    def do_ora(self, data):
       if data[0] == '\x1d':
          addr = struct.unpack('H', data[1:3])[0]
-         val = self.read_memory(addr, 1)[0]
+         val = ord(self.read_memory(addr, 1))
          print "ORA $%02x, X" % val
          self.A = self.X | val
          self.set_flags(self.A)
@@ -183,7 +195,9 @@ class NESProc:
       self.P['D'] = 0
       
    def do_rts(self, data):
-      print "RTS [FINISH ME!]" #TODO Finish
+      new_loc = self.pop_stack()
+      print "RTS => $%04x" % new_loc
+      return new_loc
       
    def set_flags(self, val):
       if val == 0:
@@ -199,7 +213,7 @@ class NESProc:
       if data[0] == "\xC6":
          addr = ord(data[1])
          print "DEC $%02x" % addr
-         temp = self.read_memory(addr, 1)[0]
+         temp = ord(self.read_memory(addr, 1))
          if temp == 0:
             temp = 0xFF
          else:
@@ -211,11 +225,51 @@ class NESProc:
       self.S = self.X
       print "TXS"
       self.set_flags(self.S)
-            
+      
+   def do_inx(self, data):
+      self.X += 1
+      print "INX"
+      if self.X == 0x100:
+         self.X = 0
+      self.set_flags(self.X)
+   
+   def do_jsr(self, data):
+      self.push_stack(self.PC + 3)
+      new_loc = struct.unpack('H', data[1:3])[0]
+      print "JSR $%04x" % new_loc
+      return new_loc
+      
+   #internal func
    def do_write_ram(self, addr, val):
-      for idx,byte in enumerate(val):
-         self.memory[addr+idx] = byte
+      #for idx,byte in enumerate(val):
+      #   self.memory[addr+idx] = byte
+      for i in range(len(val)):
+         self.memory[addr+i] = ord(val[i])
          
+   def push_stack(self, value):
+      # Reference: http://www.obelisk.demon.co.uk/6502/registers.html
+      # Points to lower 8-bits of stack address (0x0100 -> 0x0x01FF)
+      # Points to next free stack location
+      self.S -= 2
+      self.write_memory(0x0100 + self.S, struct.pack('H', value))      
+      print "Pushing $%04x" % value
+      print "Stack Dump"
+      cur_addr = 0xFF
+      while cur_addr >= self.S:
+         print "$%04x: $%04x" % (0x0100+cur_addr, struct.unpack('H', self.read_memory(0x0100 + cur_addr, 2))[0])
+         cur_addr -= 2
+   
+   def pop_stack(self):
+      print "Stack Dump"
+      cur_addr = 0xFF
+      while cur_addr >= self.S:
+         print "$%04x: $%04x" % (0x0100+cur_addr, struct.unpack('H', self.read_memory(0x0100 + cur_addr, 2))[0])
+         cur_addr -= 2
+      stack_val = self.read_memory(0x0100 + self.S, 2)
+      self.S += 2
+      return struct.unpack('H', stack_val)[0]
+         
+   # val = string of data to write
    def write_memory(self, addr, val):
       try:
          print "Writing to %s" % self.interfaces[addr]
@@ -224,6 +278,10 @@ class NESProc:
          
       # First four areas are mirrored
       if addr >= 0 and addr < 0x800:
+         print "Writing: ",
+         for char in val:
+            print "%02x " % ord(char),
+         print "to $%04x" % addr
          self.do_write_ram(addr+0x800, val)
          self.do_write_ram(addr+0x1000, val)
          self.do_write_ram(addr+0x1800, val)
@@ -242,22 +300,25 @@ class NESProc:
          self.do_write_ram(offset, val)
          self.do_write_ram(offset+0x800, val)
          self.do_write_ram(offset+0x1000, val)
-      else:
-         self.do_write_ram(addr, val)  
+      
+      self.do_write_ram(addr, val)  
    
+   # returns a data string copy of the memory
    def read_memory(self, addr, length):
       try:
          print "Reading from %s" % self.interfaces[addr]
       except:
          pass
-      return self.memory[addr:addr+length]
+      return str(self.memory[addr:addr+length])
    
    def parse_instruction(self, data):
       #print "Parsing: %02x" % ord(data[0])
-      try:
-         new_loc = self.INST_SET[data[:1]][0](data)
-      except:
+      new_loc = None
+      if self.INST_SET.has_key(data[0]):
+         new_loc = self.INST_SET[data[0]][0](data)
+      else:
          print "Unknown Opcode"
+         sys.exit()
          #print "Unknown Opcode - skipping"
          #new_loc = self.PC + 1
          
@@ -268,40 +329,43 @@ class NESProc:
       #print "PC = $%04x" % self.PC
    
    def print_regs(self):
-      print "A: $%02x, X: $%02x, Y: $%02x, PC: $%02x, Cycles: %d" % \
-         (self.A, self.X, self.Y, self.PC, self.cycle_count)
+      print "A: $%02x, X: $%02x, Y: $%02x, S: $%04x, PC: $%04x, Cycles: %d" % \
+         (self.A, self.X, self.Y, 0x0100 + self.S, self.PC, self.cycle_count)
       print "  [Flags] N: %d, V: %d, B: %d, D: %d, I: %d, Z: %d, C: %d" % \
          (self.P['N'], self.P['V'], self.P['B'], self.P['D'], \
          self.P['I'], self.P['Z'], self.P['C'])
    
    def run(self):
-      nmi = self.read_memory(0xFFFA, 2)[0]
+      nmi = struct.unpack('H', self.read_memory(0xFFFA, 2))
       print "NMI $%04x" % nmi
-      reset = self.read_memory(0xFFFC, 2)[0]
+      reset = struct.unpack('H', self.read_memory(0xFFFC, 2))
       print "Reset $%04x" % reset
-      irq = self.read_memory(0xFFFE, 2)[0]
+      irq = struct.unpack('H', self.read_memory(0xFFFE, 2))
       print "IRQ $%04x" % irq
       while True:
-         offset = self.PC - 0x8000
+         #offset = self.PC - 0x8000
          
-         for char in self.nes_file.prgs[0][offset:offset+10]:
-            print "%02x " % ord(char),
+         #for char in self.nes_file.prgs[0][offset:offset+10]:
+         for i in range(10):
+            print "%02x " % ord(self.read_memory(self.PC+i, 1)),
+            #print "%02x " % ord(char),
          print "\n",
          self.print_regs()
-         data = self.nes_file.prgs[0][offset:offset+5]
+         #data = self.nes_file.prgs[0][offset:offset+5]
+         data = self.read_memory(self.PC, 5)
          self.parse_instruction(data)
          
          # VBlank emulation
          self.cycle_count += self.INST_SET[data[:1]][2]
          if self.cycle_count >= 29760 and self.vblank == False:
-            ppu_status = self.read_memory(0x2002, 1)[0]
+            ppu_status = ord(self.read_memory(0x2002, 1))
             print "VBlank ON: PPU Status: 0x%02x" % ppu_status
             self.write_memory(0x2002, chr(ppu_status | 0x80))
             self.vblank = True
          
          #TODO: how long does a VBlank last?
          if self.cycle_count >= 59520 and self.vblank == True:
-            ppu_status = self.read_memory(0x2002, 1)[0]
+            ppu_status = ord(self.read_memory(0x2002, 1))
             print "VBlank OFF: PPU Status: 0x%02x" % ppu_status
             self.write_memory(0x2002, chr(ppu_status & 0x7F))
             self.cycle_count = 0            
