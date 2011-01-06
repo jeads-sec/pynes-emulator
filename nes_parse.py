@@ -38,10 +38,13 @@ class NESProc:
          '\x60': (self.do_rts, 1, 6), '\xC6': (self.do_dec, 2, 5), \
          '\x9A': (self.do_txs, 1, 2), '\x95': (self.do_sta, 2, 4), \
          '\x9D': (self.do_sta, 3, 5), '\xE8': (self.do_inx, 1, 2), \
-         '\x20': (self.do_jsr, 3, 6), }
+         '\x20': (self.do_jsr, 3, 6), '\x8E': (self.do_stx, 3, 4), \
+         '\xBD': (self.do_lda, 3, 4), '\xE0': (self.do_cpx, 2, 2), #TODO: conditional cycles \
+         '\xB1': (self.do_lda, 2, 5),#TODO: conditional cycles \
+         }
       self.interfaces = {0x2000: "PPU Control Reg 1", 0x2001: "PPU Control Reg 2", \
-         0x2002: "PPU Status Reg", 0x2006: "VRAM Address", \
-         0x2007: "VRAM I/O", 0x4016: "Joystick 1"}
+         0x2002: "PPU Status Reg", 0x2006: "PPU Memory Address", \
+         0x2007: "PPU Memory Data", 0x4016: "Joystick 1"}
          
       self.cycle_count = 0
       self.A = 0
@@ -78,14 +81,28 @@ class NESProc:
       
    def do_lda(self, data):
       if data[0] == '\xA9':
-         val = ord(data[1])
-         print "LDA $%02x" % val
+         addr = ord(data[1])
+         val = ord(self.read_memory(addr, 1))
+         print "LDA [$00%02x] => $%02x" % (addr, val)
          self.A = val
          self.set_flags(self.A)
       elif data[0] == '\xAD':
          addr = struct.unpack('H', data[1:3])[0]
          val = ord(self.read_memory(addr, 1))
          print "LDA [$%04x] => $%02x" % (addr, val)
+         self.A = val
+         self.set_flags(self.A)
+      elif data[0] == '\xBD':
+         abs_addr = struct.unpack('H', data[1:3])[0]
+         addr = abs_addr + self.X
+         val = ord(self.read_memory(addr, 1))
+         print "LDA [$%04x, X], X = $%02x => $%02x" % (abs_addr, self.X, val)
+         self.A = val
+         self.set_flags(self.A)
+      elif data[0] == '\xB1':
+         addr = ord(data[1]) + self.Y
+         val = ord(self.read_memory(addr, 1))
+         print "LDA [$%02x + Y], Y = $%02x => $%02x" % (addr, self.Y, val)
          self.A = val
          self.set_flags(self.A)
       
@@ -238,7 +255,26 @@ class NESProc:
       new_loc = struct.unpack('H', data[1:3])[0]
       print "JSR $%04x" % new_loc
       return new_loc
-      
+   
+   def do_stx(self, data):
+      if data[0] == '\x8E':
+         addr = struct.unpack(   'H', data[1:3])[0]
+         print "STX $%04x" % addr
+         self.write_memory(addr, chr(self.X))
+   
+   def do_cpx(self, data):
+      if data[0] == '\xE0':
+         operand = ord(data[1])
+         result = self.X - operand
+         if result < 0:
+            result = 256 + result #emulate 8-bit register
+         self.set_flags(result)
+         if self.X >= operand:
+            self.C = 1
+         else:
+            self.C = 0
+         
+   
    #internal func
    def do_write_ram(self, addr, val):
       #for idx,byte in enumerate(val):
