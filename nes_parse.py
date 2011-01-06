@@ -10,32 +10,56 @@ import sys
 #Joystick 1: $4016
 #Joystick 2: $4017
 
+# VBlank notes
+# 240 scanlines/VBlank on NTSC * 60 VBlanks/second = 14400 scanlines/second
+# NES runs at 1789772.5 cycles/second
+# ~ 124 cycles per scanline
+# 29760 cycles for 240 scanlines
+
 def bin(x): 
    return ''.join(x & (1 << i) and '1' or '0' for i in range(7,-1,-1))
 
 
 class NESProc:
    def __init__(self, nes_file):
-      self.INST_SET = {'\xA0': (self.do_ldy, 2), '\xA2': (self.do_ldx, 2), \
-         '\x4C': (self.do_jmp, 3), '\x84': (self.do_sty, 2), \
-         '\xA9': (self.do_lda, 2), '\x91': (self.do_sta, 2), \
-         '\x88': (self.do_dey, 1), '\xD0': (self.do_bne, 2), \
-         '\xC0': (self.do_cpy, 2), '\x78': (self.do_sei, 1), \
-         '\xAD': (self.do_lda, 3), '\x10': (self.do_bpl, 2), \
-         '\x8D': (self.do_sta, 3), '\x29': (self.do_and, 2), \
-         '\xF0': (self.do_beq, 2), '\x1D': (self.do_ora, 3), \
-         '\xD8': (self.do_cld, 1), '\x85': (self.do_sta, 2), \
-         '\x60': (self.do_rts, 1), '\xC6': (self.do_dec, 2)}
-      self.interfaces = {0x2002: "PPU Status Reg", 0x4016: "Joystick 1"}
+      
+      # Format: (opcode, length, cycles)
+      # Reference: http://e-tradition.net/bytes/6502/6502_instruction_set.html
+      self.INST_SET = { \
+         '\xA0': (self.do_ldy, 2, 2), '\xA2': (self.do_ldx, 2, 2), \
+         '\x4C': (self.do_jmp, 3, 3), '\x84': (self.do_sty, 2, 3), \
+         '\xA9': (self.do_lda, 2, 2), '\x91': (self.do_sta, 2, 6), \
+         '\x88': (self.do_dey, 1, 2), '\xD0': (self.do_bne, 2, 2), #TODO: conditinal cycles\
+         '\xC0': (self.do_cpy, 2, 2), '\x78': (self.do_sei, 1, 2), \
+         '\xAD': (self.do_lda, 3, 4), '\x10': (self.do_bpl, 2, 2), #TODO: conditional cycles\
+         '\x8D': (self.do_sta, 3, 4), '\x29': (self.do_and, 2, 2), \
+         '\xF0': (self.do_beq, 2, 2), '\x1D': (self.do_ora, 3, 4), #TODO: conditional cycles\
+         '\xD8': (self.do_cld, 1, 2), '\x85': (self.do_sta, 2, 3), \
+         '\x60': (self.do_rts, 1, 6), '\xC6': (self.do_dec, 2, 5), \
+         '\x9A': (self.do_txs, 1, 2),}
+      self.interfaces = {0x2002: "PPU Status Reg", 0x2006: "VRAM Address", \
+         0x2007: "VRAM I/O", 0x4016: "Joystick 1"}
+         
+      self.cycle_count = 0
       self.A = 0
       self.X = 0
       self.Y = 0
       self.PC = 0x8000
       self.S = 0
       self.P = {'C': 0, 'Z': 0, 'I': 0, 'D': 0, 'B': 0, 'V': 0, 'N': 0}
+      
+      self.vblank = False
       self.nes_file = nes_file
-      self.memory = bytearray(0x10000)
-      self.write_memory(0x8000, self.nes_file.prgs[0]) #TODO: make better
+      self.memory = bytearray(0x10000)  #64kb of main RAM
+      self.vram = bytearray(0x4000)     #16kb of PPU RAM
+      if len(self.nes_file.prgs) == 1:
+         self.write_memory(0x8000, self.nes_file.prgs[0]) #TODO: make better
+         self.write_memory(0xC000, self.nes_file.prgs[0])
+      elif len(self.nes_file.prgs) > 1:
+         self.write_memory(0x8000, self.nes_file.prgs[0])
+         self.write_memory(0xC000, self.nes_file.prgs[1])
+      else:
+         print "invalid length of PRG-ROM"
          
    def do_ldx(self, data):
       addr = ord(data[1])
@@ -182,15 +206,44 @@ class NESProc:
             temp -= 1
          self.write_memory(addr, chr(temp))
          self.set_flags(temp)
+         
+   def do_txs(self, data):
+      self.S = self.X
+      print "TXS"
+      self.set_flags(self.S)
             
-   
+   def do_write_ram(self, addr, val):
+      for idx,byte in enumerate(val):
+         self.memory[addr+idx] = byte
+         
    def write_memory(self, addr, val):
       try:
          print "Writing to %s" % self.interfaces[addr]
       except:
          pass
-      for idx,byte in enumerate(val):
-         self.memory[addr+idx] = byte   
+         
+      # First four areas are mirrored
+      if addr >= 0 and addr < 0x800:
+         self.do_write_ram(addr+0x800, val)
+         self.do_write_ram(addr+0x1000, val)
+         self.do_write_ram(addr+0x1800, val)
+      elif addr >= 0x800 and addr < 0x1000:
+         offset = addr-0x800
+         self.do_write_ram(offset, val)
+         self.do_write_ram(offset+0x1000, val)
+         self.do_write_ram(offset+0x1800, val)
+      elif addr >= 0x1000 and addr < 0x1800:
+         offset = addr-0x1000
+         self.do_write_ram(offset, val)
+         self.do_write_ram(offset+0x800, val)
+         self.do_write_ram(offset+0x1800, val)
+      elif addr >= 0x1800 and addr < 0x2000:
+         offset = addr-0x1800
+         self.do_write_ram(offset, val)
+         self.do_write_ram(offset+0x800, val)
+         self.do_write_ram(offset+0x1000, val)
+      else:
+         self.do_write_ram(addr, val)  
    
    def read_memory(self, addr, length):
       try:
@@ -215,13 +268,19 @@ class NESProc:
       #print "PC = $%04x" % self.PC
    
    def print_regs(self):
-      print "A: $%02x, X: $%02x, Y: $%02x, PC: $%02x" % \
-         (self.A, self.X, self.Y, self.PC)
+      print "A: $%02x, X: $%02x, Y: $%02x, PC: $%02x, Cycles: %d" % \
+         (self.A, self.X, self.Y, self.PC, self.cycle_count)
       print "  [Flags] N: %d, V: %d, B: %d, D: %d, I: %d, Z: %d, C: %d" % \
          (self.P['N'], self.P['V'], self.P['B'], self.P['D'], \
          self.P['I'], self.P['Z'], self.P['C'])
    
    def run(self):
+      nmi = self.read_memory(0xFFFA, 2)[0]
+      print "NMI $%04x" % nmi
+      reset = self.read_memory(0xFFFC, 2)[0]
+      print "Reset $%04x" % reset
+      irq = self.read_memory(0xFFFE, 2)[0]
+      print "IRQ $%04x" % irq
       while True:
          offset = self.PC - 0x8000
          
@@ -229,7 +288,25 @@ class NESProc:
             print "%02x " % ord(char),
          print "\n",
          self.print_regs()
-         self.parse_instruction(self.nes_file.prgs[0][offset:offset+5])
+         data = self.nes_file.prgs[0][offset:offset+5]
+         self.parse_instruction(data)
+         
+         # VBlank emulation
+         self.cycle_count += self.INST_SET[data[:1]][2]
+         if self.cycle_count >= 29760 and self.vblank == False:
+            ppu_status = self.read_memory(0x2002, 1)[0]
+            print "VBlank ON: PPU Status: 0x%02x" % ppu_status
+            self.write_memory(0x2002, chr(ppu_status | 0x80))
+            self.vblank = True
+         
+         #TODO: how long does a VBlank last?
+         if self.cycle_count >= 59520 and self.vblank == True:
+            ppu_status = self.read_memory(0x2002, 1)[0]
+            print "VBlank OFF: PPU Status: 0x%02x" % ppu_status
+            self.write_memory(0x2002, chr(ppu_status & 0x7F))
+            self.cycle_count = 0            
+            self.vblank = False
+            
          print "\n",
       
       
