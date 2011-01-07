@@ -40,8 +40,9 @@ class NESProc:
          '\x9D': (self.do_sta, 3, 5), '\xE8': (self.do_inx, 1, 2), \
          '\x20': (self.do_jsr, 3, 6), '\x8E': (self.do_stx, 3, 4), \
          '\xBD': (self.do_lda, 3, 4), '\xE0': (self.do_cpx, 2, 2), #TODO: conditional cycles \
-         '\xB1': (self.do_lda, 2, 5),#TODO: conditional cycles \
-         }
+         '\xB1': (self.do_lda, 2, 5), '\xC8': (self.do_iny, 1, 2), #TODO: conditional cycles \
+         '\xE6': (self.do_inc, 2, 5), '\xCA': (self.do_dex, 1, 2),
+         '\x58': (self.do_cli, 1, 2), }
       self.interfaces = {0x2000: "PPU Control Reg 1", 0x2001: "PPU Control Reg 2", \
          0x2002: "PPU Status Reg", 0x2006: "PPU Memory Address", \
          0x2007: "PPU Memory Data", 0x4016: "Joystick 1"}
@@ -81,9 +82,8 @@ class NESProc:
       
    def do_lda(self, data):
       if data[0] == '\xA9':
-         addr = ord(data[1])
-         val = ord(self.read_memory(addr, 1))
-         print "LDA [$00%02x] => $%02x" % (addr, val)
+         val = ord(data[1])
+         print "LDA %02x" % val
          self.A = val
          self.set_flags(self.A)
       elif data[0] == '\xAD':
@@ -249,6 +249,13 @@ class NESProc:
       if self.X == 0x100:
          self.X = 0
       self.set_flags(self.X)
+
+   def do_iny(self, data):
+      self.Y += 1
+      print "INY"
+      if self.Y == 0x100:
+         self.Y = 0
+      self.set_flags(self.Y)
    
    def do_jsr(self, data):
       self.push_stack(self.PC + 3)
@@ -273,6 +280,26 @@ class NESProc:
             self.C = 1
          else:
             self.C = 0
+   
+   def do_inc(self, data):
+      if data[0] == '\xE6':
+         addr = ord(data[1])
+         val = ord(self.read_memory(addr, 1))
+         val += 1
+         if val == 0x100:
+            val = 0
+         print "INC $%02x" % addr
+         self.write_memory(addr, chr(val))
+         self.set_flags(val)
+         
+   def do_dex(self, data):
+      self.X -= 1
+      self.set_flags(self.X)
+      print "DEX"
+   
+   def do_cli(self, data):
+      self.P['I'] = 0
+      print "CLI"
          
    
    #internal func
@@ -372,11 +399,11 @@ class NESProc:
          self.P['I'], self.P['Z'], self.P['C'])
    
    def run(self):
-      nmi = struct.unpack('H', self.read_memory(0xFFFA, 2))
+      nmi = struct.unpack('H', self.read_memory(0xFFFA, 2))[0]
       print "NMI $%04x" % nmi
-      reset = struct.unpack('H', self.read_memory(0xFFFC, 2))
+      reset = struct.unpack('H', self.read_memory(0xFFFC, 2))[0]
       print "Reset $%04x" % reset
-      irq = struct.unpack('H', self.read_memory(0xFFFE, 2))
+      irq = struct.unpack('H', self.read_memory(0xFFFE, 2))[0]
       print "IRQ $%04x" % irq
       while True:
          #offset = self.PC - 0x8000
@@ -398,6 +425,14 @@ class NESProc:
             print "VBlank ON: PPU Status: 0x%02x" % ppu_status
             self.write_memory(0x2002, chr(ppu_status | 0x80))
             self.vblank = True
+            
+            ppu_ctrl = ord(self.read_memory(0x2000, 1))
+            print "PPU Control: 0x%02x" % ppu_ctrl
+            if self.P['I'] == 0 and ppu_ctrl & 0x80:
+               self.push_stack(self.PC)
+               self.PC = nmi
+               print "PC: $%04x" % self.PC
+               print "%02x" % ord(self.read_memory(self.PC, 1))
          
          #TODO: how long does a VBlank last?
          if self.cycle_count >= 59520 and self.vblank == True:
