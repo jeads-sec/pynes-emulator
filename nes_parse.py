@@ -42,10 +42,20 @@ class NESProc:
          '\xBD': (self.do_lda, 3, 4), '\xE0': (self.do_cpx, 2, 2), #TODO: conditional cycles \
          '\xB1': (self.do_lda, 2, 5), '\xC8': (self.do_iny, 1, 2), #TODO: conditional cycles \
          '\xE6': (self.do_inc, 2, 5), '\xCA': (self.do_dex, 1, 2),
-         '\x58': (self.do_cli, 1, 2), }
-      self.interfaces = {0x2000: "PPU Control Reg 1", 0x2001: "PPU Control Reg 2", \
-         0x2002: "PPU Status Reg", 0x2006: "PPU Memory Address", \
-         0x2007: "PPU Memory Data", 0x4016: "Joystick 1"}
+         '\x58': (self.do_cli, 1, 2), '\xA6': (self.do_ldx, 2, 3),
+         '\x86': (self.do_stx, 2, 3), '\xC9': (self.do_cmp, 2, 2),
+         '\x18': (self.do_clc, 1, 2), '\x65': (self.do_adc, 2, 3),
+         }
+      self.interfaces = {0x2000: "PPU Control Reg 1", \
+         0x2001: "PPU Control Reg 2", \
+         0x2002: "PPU Status Reg", \
+         0x2003: "Sprite Memory Address", \
+         0x2004: "Sprite Memory Data", \
+         0x2005: "Screen Scroll Offsets", \
+         0x2006: "PPU Memory Address", \
+         0x2007: "PPU Memory Data", \
+         0x4014: "Sprite Memory DMA", \
+         0x4016: "Joystick 1"}
          
       self.cycle_count = 0
       self.A = 0
@@ -69,10 +79,17 @@ class NESProc:
          print "invalid length of PRG-ROM"
          
    def do_ldx(self, data):
-      addr = ord(data[1])
-      print "LDX $%02x" % addr
-      self.X = addr
-      self.set_flags(self.X)
+      if data[0] == '\xA2':
+         val = ord(data[1])
+         print "LDX $%02x" % val
+         self.X = val
+         self.set_flags(self.X)
+      elif data[0] == '\xA6':
+         addr = ord(data[1])
+         val = ord(self.read_memory(addr, 1))
+         print "LDX [$%02x]" % addr
+         self.X = val
+         self.set_flags(self.X)
    
    def do_ldy(self, data):
       addr = ord(data[1])
@@ -268,6 +285,10 @@ class NESProc:
          addr = struct.unpack(   'H', data[1:3])[0]
          print "STX $%04x" % addr
          self.write_memory(addr, chr(self.X))
+      if data[0] == '\x86':
+         addr = ord(data[1])
+         print "STX $%02x" % addr
+         self.write_memory(addr, chr(self.X))
    
    def do_cpx(self, data):
       if data[0] == '\xE0':
@@ -300,6 +321,47 @@ class NESProc:
    def do_cli(self, data):
       self.P['I'] = 0
       print "CLI"
+      
+   def do_cmp(self, data):
+      val = ord(data[1])
+      result = self.A - val
+      if self.A >= val:
+         self.P['C'] = 1
+      else:
+         self.P['C'] = 0
+      self.set_flags(self.A)
+      print "CMP $%02x" % val
+   
+   def do_clc(self, data):
+      self.P['C'] = 0
+      print "CLC"
+   
+   def do_adc(self, data):
+      if data[0] == '\x65':
+         addr = ord(data[1])
+         val = ord(self.read_memory(addr, 1)[0])
+         print "ADC $%02x" % addr
+         
+      result = self.A + val + self.P['C']
+      #if (result & 0x80) != (self.A & 80):
+      #ref: http://nesdev.parodius.com/bbs/viewtopic.php?t=6331&sid=c635c096178295cde45bd5e7ba0d2ca5
+      if (self.A ^ result) & (val ^ result) & 0x80:
+         self.P['V'] = 1
+      else:
+         self.P['V'] = 0
+         
+      if result > 0xFF:
+         self.P['C'] = 1
+         result = 0xFF - result
+      else:
+         self.P['C'] = 0
+         
+      self.A = result
+      
+   def do_rti(self, data):
+      print "RTI"
+      self.set_flags(self.pop_stack())
+      self.PC = self.pop_stack()
          
    
    #internal func
@@ -309,6 +371,19 @@ class NESProc:
       for i in range(len(val)):
          self.memory[addr+i] = ord(val[i])
          
+   def get_flags(self):
+      return self.P['C'] | P['Z'] << 1 | P['I'] << 2 | P['D'] << 3 | \
+               P['B'] << 4 | P['V'] << 5 | P['N'] << 6
+   
+   def set_flags(self, value):
+      self.P['C'] = value & 1
+      self.P['Z'] = value & 2
+      self.P['I'] = value & 4
+      self.P['D'] = value & 8
+      self.P['B'] = value & 16
+      self.P['V'] = value & 32
+      self.P['N'] = value & 64
+      
    def push_stack(self, value):
       # Reference: http://www.obelisk.demon.co.uk/6502/registers.html
       # Points to lower 8-bits of stack address (0x0100 -> 0x0x01FF)
@@ -341,10 +416,6 @@ class NESProc:
          
       # First four areas are mirrored
       if addr >= 0 and addr < 0x800:
-         print "Writing: ",
-         for char in val:
-            print "%02x " % ord(char),
-         print "to $%04x" % addr
          self.do_write_ram(addr+0x800, val)
          self.do_write_ram(addr+0x1000, val)
          self.do_write_ram(addr+0x1800, val)
@@ -427,12 +498,10 @@ class NESProc:
             self.vblank = True
             
             ppu_ctrl = ord(self.read_memory(0x2000, 1))
-            print "PPU Control: 0x%02x" % ppu_ctrl
             if self.P['I'] == 0 and ppu_ctrl & 0x80:
                self.push_stack(self.PC)
+               self.push_stack(self.get_flags())
                self.PC = nmi
-               print "PC: $%04x" % self.PC
-               print "%02x" % ord(self.read_memory(self.PC, 1))
          
          #TODO: how long does a VBlank last?
          if self.cycle_count >= 59520 and self.vblank == True:
