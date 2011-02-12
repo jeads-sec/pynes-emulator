@@ -69,7 +69,7 @@ class NESProc:
          0x2005: ("Screen Scroll Offsets", None), \
          0x2006: ("PPU Memory Address", self.do_ppu_addr_access), \
          0x2007: ("PPU Memory Data", self.do_ppu_data_access), \
-         0x4014: ("Sprite Memory DMA", None), \
+         0x4014: ("Sprite Memory DMA", self.do_ppu_sprite_dma_access), \
          0x4016: ("Joystick 1", None), }
          
       self.cycle_count = 0
@@ -85,6 +85,8 @@ class NESProc:
       self.PPU_high = None
       self.PPU_addr = None
       self.vram = bytearray(0x4000)     #16kb of PPU RAM
+      self.spr_ram = bytearray(0x100)   # 256 bytes of SPR-RAM
+      self.sprites = [None]*64
       
       self.log = logging.getLogger("6502-core")
       self.ch = logging.StreamHandler()
@@ -394,10 +396,17 @@ class NESProc:
          
    
    #internal func
+   def do_ppu_sprite_dma_access(self, is_write, val):
+      if is_write:
+         addr = struct.unpack('B', val)[0] * 0x100
+         self.log.debug("Writing data @ 0x%04x into SPR-RAM" % addr)
+         sprite_mem = self.read_memory(addr, 256)
+         self.spr_ram = sprite_mem
+      
    def do_ppu_ctrl1_access(self, is_write, val):
       if is_write:
          data = struct.unpack('B', val)[0]
-         self.log.warning("Writing 0x%02x to PPU Control Register 1" % data)
+         self.log.debug("Writing 0x%02x to PPU Control Register 1" % data)
          self.PPU_vblank_enable = data & 0x80
       
    def do_ppu_addr_access(self, is_write, val):
@@ -518,6 +527,22 @@ class NESProc:
             
       return str(self.memory[addr:addr+length])
    
+   def update_screen(self):
+      self.window.fill((0,0,0))
+      c = pygame.color.Color(255,255,255)
+      for i in range(0, 256, 4):
+         (y_pos, pat_num, attr, x_pos) = struct.unpack("BBBB", str(self.spr_ram[i:i+4]))
+         #r = pygame.rect.Rect(x_pos, y_pos, 8, 8)
+         #pygame.draw.rect(self.window, c, r)
+         if not self.sprites[i/4]:
+            self.sprites[i/4] = pygame.rect.Rect(x_pos, y_pos, 8, 8)
+         elif self.sprites[i/4].top != y_pos or self.sprites[i/4].left != x_pos:
+            (self.sprites[i/4].left, self.sprites[i/4].top) = (x_pos, y_pos)
+         self.window.fill(c, self.sprites[i/4])
+         self.log.debug("SPR%d: X: %d Y: %d" % (i/4, x_pos, y_pos))
+      #print self.sprites
+      pygame.display.update()
+   
    def parse_instruction(self, data):
       #print "Parsing: %02x" % ord(data[0])
       new_loc = None
@@ -560,13 +585,15 @@ class NESProc:
          #offset = self.PC - 0x8000
          
          #for char in self.nes_file.prgs[0][offset:offset+10]:
-         output = ''
-         for i in range(10):
-            output += "%02x " % ord(self.read_memory(self.PC+i, 1))
-            #print "%02x " % ord(char),
-         self.log.debug(output)
+         if self.log.getEffectiveLevel() == logging.DEBUG:
+            output = ''
+            for i in range(10):
+               output += "%02x " % ord(self.read_memory(self.PC+i, 1))
+               #print "%02x " % ord(char),
+            self.log.debug(output)
          
-         self.print_regs()
+         if self.log.getEffectiveLevel() == logging.DEBUG:
+            self.print_regs()
          #data = self.nes_file.prgs[0][offset:offset+5]
          data = self.read_memory(self.PC, 5)
          self.parse_instruction(data)
@@ -591,6 +618,7 @@ class NESProc:
          #if self.cycle_count >= 59520 and self.vblank == True:
          #ref: http://wiki.nesdev.com/w/index.php/Clock_rate
          if self.cycle_count >= 2270 and self.vblank == True:
+            self.update_screen()
             ppu_status = ord(self.read_memory(0x2002, 1))
             self.log.info("VBlank OFF: PPU Status: 0x%02x" % ppu_status)
             self.write_memory(0x2002, chr(ppu_status & 0x7F))           
@@ -674,3 +702,5 @@ def main():
 
 if __name__ == "__main__":      
    main()
+   #import cProfile
+   #cProfile.run('main()')
