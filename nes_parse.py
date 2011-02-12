@@ -1,6 +1,15 @@
 #!/usr/bin/python
 import struct
 import sys
+import logging
+import time
+import pygame
+
+try:
+   import psyco
+   psyco.full()
+except ImportError:
+   print "Could not import psyco, skipping..."
 
 #SRAM Area: 0x6000 -> 0x7FFF
 #PRG Area:  0x8000 -> 0xFFFF
