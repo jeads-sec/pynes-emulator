@@ -36,6 +36,12 @@ LEVELS = {'debug': logging.DEBUG,
           'error': logging.ERROR,
           'critical': logging.CRITICAL}
 
+class PyNESException(Exception):
+   def __init__(self, string):
+      self.err_msg = string
+   def __str__(self):
+      return self.err_msg
+
 class NESProc:
    def __init__(self, nes_file, log_level='warning'):
       
@@ -69,7 +75,8 @@ class NESProc:
          '\x0A': (self.do_asl, 1, 2), '\x68': (self.do_pla, 1, 4), \
          '\xAA': (self.do_tax, 1, 2), '\x6C': (self.do_jmp, 3, 5), \
          '\x00': (self.do_brk, 1, 7), '\xB0': (self.do_bcs, 2, 2), \
-         '\x2C': (self.do_bit, 3, 4), }
+         '\x2C': (self.do_bit, 3, 4), '\x09': (self.do_ora, 2, 2), \
+         }
       self.interfaces = { \
          0x2000: ("PPU Control Reg 1", self.do_ppu_ctrl1_access), \
          0x2001: ("PPU Control Reg 2", None), \
@@ -286,8 +293,13 @@ class NESProc:
          addr = struct.unpack('H', data[1:3])[0]
          val = ord(self.read_memory(addr, 1))
          if self.logEnabled: self.log.debug("ORA $%02x, X" % val)
-         self.A = (self.X | val) & 0xFF
-         self.set_flags(self.A)
+      elif data[0] == '\x09':
+         val = ord(data[1])
+         if self.logEnabled: self.log.debug("ORA $%02x, X" % val)
+      else:
+         raise PyNESException('Unknown ORA opcode')  
+      self.A = (self.X | val) & 0xFF
+      self.set_flags(self.A)
             
    def do_cld(self, data):
       if self.logEnabled: self.log.debug("CLD")
