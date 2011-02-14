@@ -5,7 +5,7 @@ import logging
 import time
 import pygame
 
-from NES_PPU import palette
+from NES_PPU import NES_PPU
 
 try:
    import psyco
@@ -102,14 +102,19 @@ class NESProc:
       self.nmi = 0
       
       # PPU info
-      self.PPU_low = None
-      self.PPU_high = None
-      self.PPU_addr = None
-      self.PPU_vblank_enable = False
-      self.PPU_pattern_table = 0x0000
-      self.vram = bytearray(0x4000)     #16kb of PPU RAM
-      self.spr_ram = bytearray(0x100)   # 256 bytes of SPR-RAM
-      self.sprites = [None]*64
+      self.ppu = NES_PPU(self, log_level)
+      
+      self.interfaces = { \
+         0x2000: ("PPU Control Reg 1", self.ppu.do_ppu_ctrl1_access), \
+         0x2001: ("PPU Control Reg 2", None), \
+         0x2002: ("PPU Status Reg", None), \
+         0x2003: ("Sprite Memory Address", None), \
+         0x2004: ("Sprite Memory Data", None), \
+         0x2005: ("Screen Scroll Offsets", None), \
+         0x2006: ("PPU Memory Address", self.ppu.do_ppu_addr_access), \
+         0x2007: ("PPU Memory Data", self.ppu.do_ppu_data_access), \
+         0x4014: ("Sprite Memory DMA", self.ppu.do_ppu_sprite_dma_access), \
+         0x4016: ("Joystick 1", None), }
       
       self.log = logging.getLogger("6502-core")
       self.ch = logging.StreamHandler()
@@ -524,59 +529,7 @@ class NESProc:
          self.P['N'] = 0
       
    
-   #internal func
-   def do_ppu_sprite_dma_access(self, is_write, val):
-      if is_write:
-         addr = struct.unpack('B', val)[0] * 0x100
-         if self.logEnabled: self.log.debug("Writing data @ 0x%04x into SPR-RAM" % addr)
-         sprite_mem = self.read_memory(addr, 256)
-         self.spr_ram = sprite_mem
-      
-   def do_ppu_ctrl1_access(self, is_write, val):
-      if is_write:
-         data = struct.unpack('B', val)[0]
-         if self.logEnabled: self.log.debug("Writing 0x%02x to PPU Control Register 1" % data)
-         self.PPU_vblank_enable = data & 0x80
-         if data & 0x8: 
-            self.PPU_pattern_table = 0x1000
-         else:
-            self.PPU_pattern_table = 0x0000
-      
-   def do_ppu_addr_access(self, is_write, val):
-      addr = struct.unpack('B', val)[0]
-      if is_write:
-         if self.logEnabled: self.log.debug("Writing 0x%02x to PPU Addr register!" % addr)
-      else:
-         if self.logEnabled: self.log.debug("Reading 0x%02x from PPU Addr register!" % addr)
-      if self.PPU_high == None:
-         self.PPU_high = addr
-      else:
-         self.PPU_low = addr
-         
-      if self.PPU_low != None and self.PPU_high != None:
-         self.PPU_addr = self.PPU_high << 8 | self.PPU_low
-         self.PPU_low = self.PPU_high = None
-         if self.logEnabled: self.log.debug("PPU set to write to 0x%04x" % self.PPU_addr)
-   
-   def do_ppu_data_access(self, is_write, val):
-      data = struct.unpack('B', val)[0]
-      ret = None
-      
-      if self.PPU_addr:
-         if is_write:
-            if self.logEnabled: self.log.debug("Writing 0x%02x to PPU Memory @ 0x%04x!" \
-               % (data, self.PPU_addr))
-            self.vram[self.PPU_addr] = data
-         else:
-            if self.logEnabled: self.log.debug("Reading 0x%02x from PPU Memory @ 0x%04x!" \
-               % (data, self.PPU_addr))
-            ret = self.vram[self.PPU_addr]
-         self.PPU_addr += 1
-      else:
-         if self.logEnabled: self.log.warning("Trying to access PPU memory with invalid PPU address")
-      if ret:
-         return ret
-      
+   #internal func      
    def do_write_ram(self, addr, val):
       #for idx,byte in enumerate(val):
       #   self.memory[addr+idx] = byte
@@ -677,33 +630,28 @@ class NESProc:
                color_sel = 3
             color_sel |= (attr & 0x3) << 2
             #print "%d,%d = %d" % (x,y,color_sel | (attr & 0x3) << 2)
-            print "0x%02x " % self.vram[0x3f00+color_sel],
-            s.set_at((x,y), palette[self.vram[0x3f00+color_sel]])
-         print ""
+            #print "0x%02x " % self.vram[0x3f00+color_sel],
+            s.set_at((x,y), self.ppu.palette[self.ppu.vram[0x3f00+color_sel]])
+         #print ""
       
       return s
    
    def update_screen(self):
       self.window.fill((0,0,0))
-      c = pygame.color.Color(255,255,255)
       #for byte in self.vram[0x3f00:0x3f10]:
       #   print byte
       for i in range(0, 256, 4):
-         (y_pos, pat_num, attr, x_pos) = struct.unpack("BBBB", str(self.spr_ram[i:i+4]))
+         (y_pos, pat_num, attr, x_pos) = struct.unpack("BBBB", str(self.ppu.spr_ram[i:i+4]))
          if pat_num:
             #print "Sprite %d: Pattern #%d" % (i/4, pat_num)
             #print "Pattern table @ 0x%04x" % self.PPU_pattern_table
-            sprite = self.render_sprite(self.memory[self.PPU_pattern_table+pat_num*0x10:self.PPU_pattern_table+pat_num*0x10+0x10], (x_pos, y_pos), attr)
+            sprite = self.render_sprite(self.memory[self.ppu.PPU_pattern_table+pat_num*0x10:self.ppu.PPU_pattern_table+pat_num*0x10+0x10], (x_pos, y_pos), attr)
             
-            #if not self.sprites[i/4]:
-            self.sprites[i/4] = sprite
-            #elif self.sprites[i/4].top != y_pos or self.sprites[i/4].left != x_pos:
-            #   self.sprites[i/4].topleft = (x_pos, y_pos)
+            self.ppu.sprites[i/4] = sprite
          else:
             continue
             
-         #self.window.fill(c, self.sprites[i/4])
-         self.window.blit(self.sprites[i/4], (x_pos,y_pos))
+         self.window.blit(self.ppu.sprites[i/4], (x_pos,y_pos))
          if self.logEnabled: self.log.debug("SPR%d: X: %d Y: %d" % (i/4, x_pos, y_pos))
       #print self.sprites
       pygame.display.update()
@@ -776,7 +724,7 @@ class NESProc:
             self.cycle_count = 0 
             self.vblank = True
             
-            if self.P['I'] == 0 and self.PPU_vblank_enable:
+            if self.P['I'] == 0 and self.ppu.PPU_vblank_enable:
                self.push_stack(self.PC)
                self.push_stack(self.get_all_flags())
                self.PC = self.nmi
