@@ -1,3 +1,11 @@
+import logging
+import pygame
+import struct
+import time
+
+from pynes import *
+from nesppu import NES_PPU
+
 class NESProc:
     def __init__(self, nes_file, log_level='warning'):
         
@@ -33,17 +41,6 @@ class NESProc:
             '\x00': (self.do_brk, 1, 7), '\xB0': (self.do_bcs, 2, 2), \
             '\x2C': (self.do_bit, 3, 4), '\x09': (self.do_ora, 2, 2), \
             }
-        self.interfaces = { \
-            0x2000: ("PPU Control Reg 1", self.do_ppu_ctrl1_access), \
-            0x2001: ("PPU Control Reg 2", None), \
-            0x2002: ("PPU Status Reg", None), \
-            0x2003: ("Sprite Memory Address", None), \
-            0x2004: ("Sprite Memory Data", None), \
-            0x2005: ("Screen Scroll Offsets", None), \
-            0x2006: ("PPU Memory Address", self.do_ppu_addr_access), \
-            0x2007: ("PPU Memory Data", self.do_ppu_data_access), \
-            0x4014: ("Sprite Memory DMA", self.do_ppu_sprite_dma_access), \
-            0x4016: ("Joystick 1", None), }
         
         self.cycle_count = 0
         self.A = 0

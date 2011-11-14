@@ -1,11 +1,7 @@
 import struct
 import logging
 
-LEVELS = {'debug': logging.DEBUG,
-             'info': logging.INFO,
-             'warning': logging.WARNING,
-             'error': logging.ERROR,
-             'critical': logging.CRITICAL}
+from pynes import *
 
 class NES_PPU:
     def __init__(self, nes_core, log_level='warning'):
