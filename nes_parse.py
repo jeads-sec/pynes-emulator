@@ -30,7 +30,7 @@ except ImportError:
 # ~ 124 cycles per scanline
 # 29760 cycles for 240 scanlines
 
-def bin(x): 
+def bin(x):
     return ''.join(x & (1 << i) and '1' or '0' for i in range(7,-1,-1))
 
 LEVELS = {'debug': logging.DEBUG,
@@ -91,7 +91,7 @@ class NESProc:
             0x2007: ("PPU Memory Data", self.do_ppu_data_access), \
             0x4014: ("Sprite Memory DMA", self.do_ppu_sprite_dma_access), \
             0x4016: ("Joystick 1", None), }
-            
+        
         self.cycle_count = 0
         self.A = 0
         self.X = 0
@@ -126,7 +126,7 @@ class NESProc:
         self.log.setLevel(LEVELS[log_level])
         self.loglevel = LEVELS[log_level]
         self.logEnabled = True
-                
+        
         self.vblank = False
         self.nes_file = nes_file
         self.memory = bytearray(0x10000)  #64kb of main RAM
@@ -141,7 +141,7 @@ class NESProc:
         
         pygame.init()
         self.window = pygame.display.set_mode((256,240))
-            
+    
     def do_ldx(self, data):
         if data[0] == '\xA2':
             val = ord(data[1])
@@ -160,7 +160,7 @@ class NESProc:
         if self.logEnabled: self.log.debug("LDY $%02x" % addr)
         self.Y = addr
         self.set_flags(self.Y)
-        
+    
     def do_lda(self, data):
         if data[0] == '\xA9':
             val = ord(data[1])
@@ -182,10 +182,10 @@ class NESProc:
             addr = ord(data[1])
             val = ord(self.read_memory(addr, 1))
             if self.logEnabled: self.log.debug("LDA [$%04x] => $%02x" % (addr, val))
-            
+        
         self.A = val & 0xFF
         self.set_flags(self.A)
-        
+    
     def do_sty(self, data):
         if data[0] == '\x84':
             addr = ord(data[1])
@@ -196,8 +196,8 @@ class NESProc:
         else:
             self.log.error("Unknown STY opcode")
             return
-        self.write_memory(addr, chr(self.Y))        
-        
+        self.write_memory(addr, chr(self.Y))
+    
     def do_sta(self, data):
         if data[0] == '\x91':
             #TODO: Don't think this is fully complete
@@ -219,12 +219,12 @@ class NESProc:
         elif data[0] == '\x99':
             abs_addr = struct.unpack('H', data[1:3])[0]
             addr = abs_addr + self.Y
-            if self.logEnabled: self.log.debug("STA $%04x, Y, Y = $%02x" % (abs_addr, self.Y)) 
+            if self.logEnabled: self.log.debug("STA $%04x, Y, Y = $%02x" % (abs_addr, self.Y))
         else:
             self.log.error("Unknown STA opcode!")
             return
         self.write_memory(addr, chr(self.A))
-        
+    
     def do_jmp(self, data):
         if data[0] == '\x4C':
             loc = struct.unpack('H', data[1:3])[0]
@@ -236,7 +236,7 @@ class NESProc:
             return
         if self.logEnabled: self.log.debug("JMP $%04x" % loc)
         return loc
-        
+    
     def do_dey(self, data):
         if self.logEnabled: self.log.debug("DEY")
         if self.Y == 0:
@@ -244,16 +244,16 @@ class NESProc:
         else:
             self.Y -= 1
         self.set_flags(self.Y)
-        
+    
     def calc_rel_jmp(self, data):
         return self.PC + struct.unpack('b',data[1])[0] + self.INST_SET[data[0]][1]
-            
+    
     def do_bne(self, data):
         offset = self.calc_rel_jmp(data)
         if self.logEnabled: self.log.debug("BNE $%04x + $%02x => $%04x" % (self.PC, struct.unpack('b',data[1])[0], offset))
         if self.P['Z'] == 0:
             return offset
-            
+    
     def do_cpy(self, data):
         addr = ord(data[1])
         temp = self.Y - self.memory[addr]
@@ -261,7 +261,7 @@ class NESProc:
             self.P['Z'] = 1
         else:
             self.P['Z'] = 0
-            
+        
         if temp > 0x7F:
             self.P['N'] = 1
         else:
@@ -271,20 +271,20 @@ class NESProc:
             self.P['C'] = 1
         else:
             self.P['C'] = 0
-            
-        if self.logEnabled: self.log.debug("CPY $%02x" % addr)
         
+        if self.logEnabled: self.log.debug("CPY $%02x" % addr)
+    
     def do_sei(self, data):
         if self.logEnabled: self.log.debug("SEI")
         self.P['I'] = 1
-        
+    
     def do_bpl(self, data):
         offset = self.calc_rel_jmp(data)
         if self.logEnabled: self.log.debug("BPL $%04x + $%02x => $%04x" % (self.PC, struct.unpack('b',data[1])[0], offset))
         if self.P['N'] == 0:
-            return offset 
+            return offset
     
-    def do_and(self, data): 
+    def do_and(self, data):
         addr = ord(data[1])
         if self.logEnabled: self.log.debug("AND $%02x" % addr)
         self.A &= addr
@@ -305,19 +305,19 @@ class NESProc:
             val = ord(data[1])
             if self.logEnabled: self.log.debug("ORA $%02x, X" % val)
         else:
-            raise PyNESException('Unknown ORA opcode')  
+            raise PyNESException('Unknown ORA opcode')
         self.A = (self.X | val) & 0xFF
         self.set_flags(self.A)
-                
+    
     def do_cld(self, data):
         if self.logEnabled: self.log.debug("CLD")
         self.P['D'] = 0
-        
+    
     def do_rts(self, data):
         new_loc = self.pop_stack()
         if self.logEnabled: self.log.debug("RTS => $%04x" % new_loc)
         return new_loc
-        
+    
     def set_flags(self, val):
         if val == 0:
             self.P['Z'] = 1
@@ -327,7 +327,7 @@ class NESProc:
             self.P['N'] = 1
         else:
             self.P['N'] = 0
-            
+    
     def do_dec(self, data):
         if data[0] == "\xC6":
             addr = ord(data[1])
@@ -339,19 +339,19 @@ class NESProc:
                 temp -= 1
             self.write_memory(addr, chr(temp))
             self.set_flags(temp)
-            
+    
     def do_txs(self, data):
         self.S = self.X
         if self.logEnabled: self.log.debug("TXS")
         self.set_flags(self.S)
-        
+    
     def do_inx(self, data):
         self.X += 1
         if self.logEnabled: self.log.debug("INX")
         if self.X == 0x100:
             self.X = 0
         self.set_flags(self.X)
-
+    
     def do_iny(self, data):
         self.Y += 1
         if self.logEnabled: self.log.debug("INY")
@@ -396,14 +396,14 @@ class NESProc:
             if self.logEnabled: self.log.debug("INC $%04x" % addr)
         else:
             self.log.error("Unknown INC opcode")
-            
+        
         val = ord(self.read_memory(addr, 1))
         val += 1
         if val == 0x100:
             val = 0
         self.write_memory(addr, chr(val))
         self.set_flags(val)
-            
+    
     def do_dex(self, data):
         self.X -= 1
         self.set_flags(self.X)
@@ -412,7 +412,7 @@ class NESProc:
     def do_cli(self, data):
         self.P['I'] = 0
         if self.logEnabled: self.log.debug("CLI")
-        
+    
     def do_cmp(self, data):
         val = ord(data[1])
         result = (self.A - val) & 0xFF
@@ -432,7 +432,7 @@ class NESProc:
             addr = ord(data[1])
             val = ord(self.read_memory(addr, 1)[0])
             if self.logEnabled: self.log.debug("ADC $%02x" % addr)
-            
+        
         result = (self.A + val + self.P['C']) & 0xFF
         #if (result & 0x80) != (self.A & 80):
         #ref: http://nesdev.parodius.com/bbs/viewtopic.php?t=6331&sid=c635c096178295cde45bd5e7ba0d2ca5
@@ -440,20 +440,20 @@ class NESProc:
             self.P['V'] = 1
         else:
             self.P['V'] = 0
-            
+        
         if result > 0xFF:
             self.P['C'] = 1
             result = 0xFF - result
         else:
             self.P['C'] = 0
-            
-        self.A = result & 0xFF
         
+        self.A = result & 0xFF
+    
     def do_rti(self, data):
         if self.logEnabled: self.log.debug("RTI")
         self.set_flags(self.pop_stack())
         return self.pop_stack()
-            
+    
     def do_tay(self, data):
         if self.logEnabled: self.log.debug("TAY")
         self.Y = self.A
@@ -471,7 +471,7 @@ class NESProc:
     
     def do_nop(self, data):
         if self.logEnabled: self.log.debug("NOP")
-        
+    
     def do_pha(self, data):
         self.push_stack(self.A)
         if self.logEnabled: self.log.debug("PHA    ")
@@ -495,7 +495,7 @@ class NESProc:
         self.A = self.pop_stack() & 0xFF
         self.set_flags(self.A)
         if self.logEnabled: self.log.debug("PLA")
-        
+    
     def do_brk(self, data):
         self.push_stack(self.PC)
         self.push_stack(self.get_all_flags())
@@ -518,28 +518,28 @@ class NESProc:
             return
         if self.logEnabled: self.log.debug("BIT 0x%02x & 0x%02x" % (self.A, val))
         result = self.A & val
-        if result == 0: 
-            self.P['Z'] = 1 
-        else: 
+        if result == 0:
+            self.P['Z'] = 1
+        else:
             self.P['Z'] = 0
-        if val & 0x40: 
-            self.P['V'] = 1 
-        else: 
+        if val & 0x40:
+            self.P['V'] = 1
+        else:
             self.P['V'] = 0
-        if val & 0x80: 
-            self.P['N'] = 1 
+        if val & 0x80:
+            self.P['N'] = 1
         else:
             self.P['N'] = 0
-        
     
-    #internal func        
+    
+    #internal func
     def do_write_ram(self, addr, val):
         #for idx,byte in enumerate(val):
         #    self.memory[addr+idx] = byte
         self.memory[addr:addr+len(val)] = val
         '''for i in range(len(val)):
             self.memory[addr+i] = ord(val[i])'''
-            
+    
     def get_all_flags(self):
         return self.P['C'] | self.P['Z'] << 1 | self.P['I'] << 2 | \
             self.P['D'] << 3 | self.P['B'] << 4 | self.P['V'] << 5 | \
@@ -553,7 +553,7 @@ class NESProc:
         self.P['B'] = value & 16
         self.P['V'] = value & 32
         self.P['N'] = value & 64
-        
+    
     def stack_dump(self):
         if self.logEnabled: self.log.debug("Stack Dump")
         cur_addr = 0xFF
@@ -562,13 +562,13 @@ class NESProc:
             output += "$%04x: $%04x\n" % (0x0100+cur_addr, struct.unpack('H', self.read_memory(0x0100 + cur_addr, 2))[0])
             cur_addr -= 2
         if self.logEnabled: self.log.debug(output)
-        
+    
     def push_stack(self, value):
         # Reference: http://www.obelisk.demon.co.uk/6502/registers.html
         # Points to lower 8-bits of stack address (0x0100 -> 0x0x01FF)
         # Points to next free stack location
         self.S -= 2
-        self.write_memory(0x0100 + self.S, struct.pack('H', value))        
+        self.write_memory(0x0100 + self.S, struct.pack('H', value))
         if self.logEnabled: self.log.debug("Pushing $%04x" % value)
         self.stack_dump()
     
@@ -577,14 +577,14 @@ class NESProc:
         stack_val = self.read_memory(0x0100 + self.S, 2)
         self.S += 2
         return struct.unpack('H', stack_val)[0]
-            
+    
     # val = string of data to write
     def write_memory(self, addr, val):
         if self.interfaces.has_key(addr):
             if self.logEnabled: self.log.info("Writing to %s" % self.interfaces[addr][0])
             if self.interfaces[addr][1]:
                 self.interfaces[addr][1](True, val)
-            
+        
         # First four areas are mirrored
         if addr >= 0 and addr < 0x800:
             self.do_write_ram(addr+0x800, val)
@@ -606,7 +606,7 @@ class NESProc:
             self.do_write_ram(offset+0x800, val)
             self.do_write_ram(offset+0x1000, val)
         
-        self.do_write_ram(addr, val)  
+        self.do_write_ram(addr, val)
     
     # returns a data string copy of the memory
     def read_memory(self, addr, length):
@@ -614,9 +614,9 @@ class NESProc:
             if self.logEnabled: self.log.info("Reading from %s" % self.interfaces[addr][0])
             if self.interfaces[addr][1]:
                 self.interfaces[addr][1](False, addr)
-                
-        return str(self.memory[addr:addr+length])
         
+        return str(self.memory[addr:addr+length])
+    
     def render_sprite(self, data, coord, attr):
         s = pygame.Surface([8,8])
         for y in range(8):
@@ -653,7 +653,7 @@ class NESProc:
                 self.ppu.sprites[i/4] = sprite
             else:
                 continue
-                
+            
             self.window.blit(self.ppu.sprites[i/4], (x_pos,y_pos))
             if self.logEnabled: self.log.debug("SPR%d: X: %d Y: %d" % (i/4, x_pos, y_pos))
         #print self.sprites
@@ -690,7 +690,7 @@ class NESProc:
             (self.P['N'], self.P['V'], self.P['B'], self.P['D'], \
             self.P['I'], self.P['Z'], self.P['C']))
     
-    def run(self):    
+    def run(self):
         self.nmi = struct.unpack('H', self.read_memory(0xFFFA, 2))[0]
         self.irq = struct.unpack('H', self.read_memory(0xFFFE, 2))[0]
         self.reset = struct.unpack('H', self.read_memory(0xFFFC, 2))[0]
@@ -724,7 +724,7 @@ class NESProc:
                 ppu_status = ord(self.read_memory(0x2002, 1))
                 if self.logEnabled: self.log.info("VBlank ON: PPU Status: 0x%02x" % ppu_status)
                 self.write_memory(0x2002, chr(ppu_status | 0x80))
-                self.cycle_count = 0 
+                self.cycle_count = 0
                 self.vblank = True
                 
                 if self.P['I'] == 0 and self.ppu.PPU_vblank_enable:
@@ -739,11 +739,11 @@ class NESProc:
                 self.update_screen()
                 ppu_status = ord(self.read_memory(0x2002, 1))
                 if self.logEnabled: self.log.info("VBlank OFF: PPU Status: 0x%02x" % ppu_status)
-                self.write_memory(0x2002, chr(ppu_status & 0x7F))              
+                self.write_memory(0x2002, chr(ppu_status & 0x7F))
                 self.vblank = False
-                        
         
         
+
 class NESFile:
     prgs = []
     chrs = []
@@ -764,7 +764,7 @@ class NESFile:
          struct.unpack("4sBBBB8x", header)
         if self.header[:4] != "NES\x1a":
             print "Checksum does not match!"
-            return False  
+            return False
         print "PRG: %d, CHR: %d, Mapping1: 0x%x, Mapping2: 0x%x" % \
              (self.prg_count, self.chr_count, self.mapping1, self.mapping2)
         for i in range(self.prg_count):
@@ -776,7 +776,7 @@ class NESFile:
         if self.prg_count == 1:
             #Mapper 0 (?), mirror memory into both banks
             self.prgs.append(self.prgs[0])
-            
+    
     def read_memory(self, addr, length):
         #TODO: handle more than 2 banks
         if addr < 0xC000 and addr >= 0x8000:
